@@ -58,19 +58,26 @@ def get_sheet():
 
 def pick_unposted_row(ws):
     all_values = ws.get_all_values()
+    print(f"[디버그] 시트 전체 행 수(헤더 포함): {len(all_values)}")
+
     header = all_values[0]
+    print(f"[디버그] 원본 헤더: {header}")
 
     # 빈 헤더 셀 제거 (뒤쪽 빈 열들 때문에 발생하는 중복 에러 방지)
     last_col = len(header)
     while last_col > 0 and not header[last_col - 1].strip():
         last_col -= 1
     header = header[:last_col]
+    print(f"[디버그] 정리된 헤더({last_col}개): {header}")
 
     if POSTED_COL_NAME not in header:
         # 없으면 마지막 열에 헤더 추가
         ws.update_cell(1, len(header) + 1, POSTED_COL_NAME)
         header.append(POSTED_COL_NAME)
         last_col += 1
+        print(f"[디버그] '{POSTED_COL_NAME}' 컬럼을 {last_col}번째 열에 새로 추가함")
+    else:
+        print(f"[디버그] '{POSTED_COL_NAME}' 컬럼이 이미 존재함 (인덱스 {header.index(POSTED_COL_NAME)})")
 
     posted_col_idx = header.index(POSTED_COL_NAME)
 
@@ -81,6 +88,8 @@ def pick_unposted_row(ws):
         if not posted_val.strip():
             row_dict = dict(zip(header, row_values))
             candidates.append((i, row_dict))
+
+    print(f"[디버그] 데이터 행 수: {len(all_values) - 1}, 포스팅 가능(미완료) 행 수: {len(candidates)}")
 
     if not candidates:
         raise RuntimeError("포스팅 가능한 상품이 없음 (전부 포스팅완료 상태)")
