@@ -361,6 +361,22 @@ def add_toc_links(html_body: str) -> str:
         for i, h2 in enumerate(h2_tags, start=1):
             h2["id"] = f"section-{i}"
 
+            # 소제목 텍스트에서 앞자리 번호(예: "1. ") 제거하고, 대신 동그란 번호 뱃지로 표시
+            raw_text = h2.get_text(strip=True)
+            m = re.match(r"^\d+[.\)]\s*(.+)$", raw_text)
+            title_text = m.group(1) if m else raw_text
+
+            h2.clear()
+            h2["style"] = "display:flex; align-items:center; gap:10px;"
+            badge = soup.new_tag("span", style=(
+                f"display:inline-flex; align-items:center; justify-content:center; "
+                f"min-width:30px; height:30px; border-radius:50%; background:{ACCENT_COLOR}; "
+                f"color:#fff; font-size:15px; font-weight:700; flex-shrink:0;"
+            ))
+            badge.string = str(i)
+            h2.append(badge)
+            h2.append(title_text)
+
         # 첫 h2보다 앞에 나오는 리스트(ul 또는 ol) 중 가장 가까운 것 = 목차일 가능성이 높음
         first_h2 = h2_tags[0]
         toc_list = None
