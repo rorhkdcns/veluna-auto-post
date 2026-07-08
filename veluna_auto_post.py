@@ -56,40 +56,53 @@ def get_sheet():
     return sh.sheet1  # 탭 이름과 무관하게 첫 번째 탭을 사용
 
 
+EXPECTED_FIRST_HEADER = "인덱스(변경불가)"
+POSTED_COL_INDEX = 18  # R열 고정 (원본 시트가 A~Q 17개 컬럼이므로 그 다음 칸)
+
+
 def pick_unposted_row(ws):
     all_values = ws.get_all_values()
-    print(f"[디버그] 시트 전체 행 수(헤더 포함): {len(all_values)}")
+    print(f"[디버그] 시트 전체 행 수: {len(all_values)}")
 
-    header = all_values[0]
-    print(f"[디버그] 원본 헤더: {header}")
+    # 헤더 행을 자동으로 탐색 (앞에 빈 행이 있어도 안전하게 찾음)
+    header_row_idx = None
+    for idx, row in enumerate(all_values):
+        if row and row[0].strip() == EXPECTED_FIRST_HEADER:
+            header_row_idx = idx
+            break
 
-    # 빈 헤더 셀 제거 (뒤쪽 빈 열들 때문에 발생하는 중복 에러 방지)
-    last_col = len(header)
-    while last_col > 0 and not header[last_col - 1].strip():
-        last_col -= 1
-    header = header[:last_col]
-    print(f"[디버그] 정리된 헤더({last_col}개): {header}")
+    if header_row_idx is None:
+        raise RuntimeError(
+            f"헤더를 찾지 못함: '{EXPECTED_FIRST_HEADER}'로 시작하는 행이 시트에 없음. "
+            f"시트 구조를 확인할 것. 안전을 위해 스크립트가 시트에 아무것도 쓰지 않음."
+        )
 
-    if POSTED_COL_NAME not in header:
-        # 없으면 마지막 열에 헤더 추가
-        ws.update_cell(1, len(header) + 1, POSTED_COL_NAME)
-        header.append(POSTED_COL_NAME)
-        last_col += 1
-        print(f"[디버그] '{POSTED_COL_NAME}' 컬럼을 {last_col}번째 열에 새로 추가함")
+    header = all_values[header_row_idx]
+    sheet_header_row_num = header_row_idx + 1  # 실제 시트상 행 번호(1-based)
+    print(f"[디버그] 헤더를 {sheet_header_row_num}행에서 찾음: {header}")
+
+    # 포스팅완료 헤더가 고정 위치(R열)에 없으면 그 위치에만 정확히 기록
+    while len(header) < POSTED_COL_INDEX:
+        header.append("")
+    if header[POSTED_COL_INDEX - 1].strip() != POSTED_COL_NAME:
+        ws.update_cell(sheet_header_row_num, POSTED_COL_INDEX, POSTED_COL_NAME)
+        header[POSTED_COL_INDEX - 1] = POSTED_COL_NAME
+        print(f"[디버그] '{POSTED_COL_NAME}' 헤더를 {sheet_header_row_num}행 {POSTED_COL_INDEX}번째 열(R열)에 기록함")
     else:
-        print(f"[디버그] '{POSTED_COL_NAME}' 컬럼이 이미 존재함 (인덱스 {header.index(POSTED_COL_NAME)})")
+        print(f"[디버그] '{POSTED_COL_NAME}' 헤더가 이미 존재함")
 
-    posted_col_idx = header.index(POSTED_COL_NAME)
+    posted_col_idx = POSTED_COL_INDEX - 1  # 0-based
 
     candidates = []
-    for i, row_values in enumerate(all_values[1:], start=2):  # 2행부터 실제 데이터
-        row_values = row_values[:last_col] + [""] * max(0, last_col - len(row_values))
+    data_rows = all_values[header_row_idx + 1:]
+    for offset, row_values in enumerate(data_rows):
+        sheet_row_num = header_row_idx + 2 + offset  # 실제 시트상 행 번호(1-based)
         posted_val = row_values[posted_col_idx] if posted_col_idx < len(row_values) else ""
         if not posted_val.strip():
-            row_dict = dict(zip(header, row_values))
-            candidates.append((i, row_dict))
+            row_dict = dict(zip(header, row_values + [""] * max(0, len(header) - len(row_values))))
+            candidates.append((sheet_row_num, row_dict))
 
-    print(f"[디버그] 데이터 행 수: {len(all_values) - 1}, 포스팅 가능(미완료) 행 수: {len(candidates)}")
+    print(f"[디버그] 데이터 행 수: {len(data_rows)}, 포스팅 가능(미완료) 행 수: {len(candidates)}")
 
     if not candidates:
         raise RuntimeError("포스팅 가능한 상품이 없음 (전부 포스팅완료 상태)")
@@ -99,9 +112,8 @@ def pick_unposted_row(ws):
 
 
 def mark_posted(ws, row_index, header, post_url):
-    col_idx = header.index(POSTED_COL_NAME) + 1
     value = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} | {post_url}"
-    ws.update_cell(row_index, col_idx, value)
+    ws.update_cell(row_index, POSTED_COL_INDEX, value)
 
 
 # ---------- 상품 상세페이지 스크래핑 ----------
