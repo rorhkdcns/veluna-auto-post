@@ -32,7 +32,7 @@ from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials as SACredentials
 from googleapiclient.discovery import build
-import google.generativeai as genai
+from google import genai
 
 from category_map import classify
 
@@ -53,7 +53,7 @@ def get_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
-    return sh.worksheet(SHEET_TAB)
+    return sh.sheet1  # 탭 이름과 무관하게 첫 번째 탭을 사용
 
 
 def pick_unposted_row(ws):
@@ -109,8 +109,7 @@ def scrape_product_images(detail_url: str):
 # ---------- Gemini로 포스팅 본문 생성 ----------
 def generate_post_content(product_name: str, category_label: str, category_raw: str,
                            price: int, detail_url: str) -> dict:
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     prompt = f"""
 너는 성인용품 전문 쇼핑몰 '벨루나(velunamall.com)'의 제휴 블로그 작성자야.
@@ -141,7 +140,10 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 }}
 """
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+    )
     text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
     return json.loads(text)
