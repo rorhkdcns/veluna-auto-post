@@ -1,28 +1,43 @@
-name: veluna-auto-post
+name: 벨루나몰 자동 포스팅
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # 매일 UTC 03:00 (한국시간 낮 12시) - 원하는 시간으로 수정 가능
-  workflow_dispatch:        # 수동 실행 버튼
+    # 💡 깃허브 액션은 UTC 기준(한국시간 - 9시간)으로 작동합니다.
+    - cron: '0 0 * * *'   # UTC 00:00 = 한국 시간 오전 09:00
+    - cron: '0 4 * * *'   # UTC 04:00 = 한국 시간 오후 01:00 (13시)
+    - cron: '0 9 * * *'   # UTC 09:00 = 한국 시간 오후 06:00 (18시)
+    - cron: '0 13 * * *'  # UTC 13:00 = 한국 시간 오후 10:00 (22시)
+  
+  # 수동 실행 버튼 유지
+  workflow_dispatch:
 
 jobs:
-  post:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout repository code
+      uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+    - name: Install dependencies
+      # 💡 벨루나몰 스크립트 구동에 필요한 라이브러리들 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 pillow gspread google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib google-genai
 
-      - name: Run auto post
-        env:
-          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          BLOGGER_TOKEN_PICKLE_B64: ${{ secrets.BLOGGER_TOKEN_PICKLE_B64 }}
-          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
-        run: python veluna_auto_post.py
+    - name: Run Auto Post Script
+      # 💡 벨루나몰 스크립트가 요구하는 환경변수 목록 (GitHub Secrets에 등록 필수)
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        BLOGGER_TOKEN_PICKLE_B64: ${{ secrets.BLOGGER_TOKEN_PICKLE_B64 }}
+        BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        IMGUR_CLIENT_ID: ${{ secrets.IMGUR_CLIENT_ID }}
+      # 💡 실행할 파이썬 파일명 (파일명이 다르다면 알맞게 수정하세요)
+      run: python veluna_auto_post.py
