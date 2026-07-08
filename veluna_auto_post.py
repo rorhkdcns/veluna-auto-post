@@ -149,7 +149,17 @@ def scrape_product_images(detail_url: str):
 
     # 상품 썸네일 (goods_img 경로) - 상세설명 긴 이미지(dtl_img)는 사용하지 않음
     main_img_tag = soup.select_one(".item_photo_big img")
-    main_img = resolve(main_img_tag["src"]) if main_img_tag else None
+    if not main_img_tag:
+        print("[알림] 썸네일 못씀: 상세페이지에서 .item_photo_big 이미지 태그 자체를 못 찾음")
+        main_img = None
+    else:
+        raw_src = main_img_tag.get("src")
+        main_img = resolve(raw_src)
+        if main_img is None:
+            if raw_src and "sample" in raw_src.lower():
+                print(f"[알림] 썸네일 못씀: 이 상품은 실제 사진 없이 기본 샘플 이미지만 등록돼 있음 ({raw_src})")
+            else:
+                print(f"[알림] 썸네일 못씀: 이미지 src를 찾을 수 없음 (raw_src={raw_src})")
 
     # 못 찾으면 og:image 메타태그로 대체 시도
     if not main_img:
@@ -157,7 +167,11 @@ def scrape_product_images(detail_url: str):
         if og_tag and og_tag.get("content"):
             main_img = resolve(og_tag["content"])
             if main_img:
-                print(f"[디버그] 대표이미지를 og:image에서 대체 확보: {main_img}")
+                print(f"[알림] og:image로 대체 확보 성공: {main_img}")
+            else:
+                print("[알림] 썸네일 못씀: og:image도 없거나 sample 이미지임 → 카테고리 썸네일로 대체 예정")
+        else:
+            print("[알림] 썸네일 못씀: og:image 메타태그 자체가 없음 → 카테고리 썸네일로 대체 예정")
 
     title_tag = soup.select_one(".item_detail_tit h3")
     page_title = title_tag.get_text(strip=True) if title_tag else None
@@ -195,7 +209,7 @@ def download_and_host_product_thumbnail(main_image: str, detail_url: str):
     """상품 썸네일 1장을 다운로드해서 repo의 images/{seq}/ 폴더에 저장하고,
     raw.githubusercontent.com 주소를 반환함 (없으면 None)"""
     if not main_image:
-        return None
+        return None  # scrape_product_images 단계에서 이미 [알림]으로 사유를 남김
 
     seq = extract_seq(detail_url)
     repo = os.environ.get("GITHUB_REPOSITORY", "")  # 예: rorhkdcns/veluna-auto-post
@@ -209,6 +223,7 @@ def download_and_host_product_thumbnail(main_image: str, detail_url: str):
 
     content = download_image(main_image, referer=detail_url)
     if content is None:
+        print(f"[알림] 썸네일 못씀: 이미지 URL은 찾았지만 다운로드가 실패함 ({main_image})")
         return None
 
     try:
@@ -445,10 +460,14 @@ def main():
     category_label = classify(category_raw)
 
     scraped = scrape_product_images(detail_url)
-    print(f"[디버그] 스크래핑된 상품 썸네일: {scraped['main_image']}")
 
     product_thumb_url = download_and_host_product_thumbnail(scraped["main_image"], detail_url)
     category_thumb_url = get_category_thumbnail_url(category_label)
+
+    if product_thumb_url:
+        print(f"[결과] 상품 자체 썸네일 사용함: {product_thumb_url}")
+    else:
+        print(f"[결과] 상품 자체 썸네일 못씀 → 카테고리({category_label}) 고정 썸네일로 대체함: {category_thumb_url}")
 
     content = generate_post_content(
         product_name=product_name,
