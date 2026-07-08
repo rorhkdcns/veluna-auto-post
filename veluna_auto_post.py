@@ -299,32 +299,35 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
   6. FAQ (질문 3개 + 답변, h3나 strong으로 질문 표시)
   7. 마무리 문단 (소제목 없이, 구매를 자연스럽게 유도하되 링크는 절대 넣지 말 것 - 카드가 별도로 붙음)
 
-출력은 JSON 형식으로만 응답해. 다른 텍스트/설명/마크다운 코드블록 없이 아래 스키마 그대로:
-{{
-  "title": "포스팅 제목",
-  "html_body": "완성된 HTML 본문 전체 (h2/h3/p/ul/li/strong 태그 사용, 이미지·링크 태그는 넣지 말 것 - 스크립트가 별도로 삽입함)"
-}}
+출력 형식은 JSON이 아니라 아래 구분자 형식으로만 출력할 것. 다른 설명, 마크다운 코드블록 없이 정확히 이 형식 그대로:
+
+[TITLE]
+여기에 포스팅 제목만 한 줄로
+
+[BODY]
+여기에 완성된 HTML 본문 전체 (h2/h3/p/ul/li/strong/div 태그 사용, 이미지·링크 태그는 넣지 말 것 - 스크립트가 별도로 삽입함)
 """
 
     response = client.models.generate_content(
         model="gemini-flash-latest",
         contents=prompt,
-        config={"response_mime_type": "application/json"},
     )
     text = response.text.strip()
-    text = text.replace("```json", "").replace("```", "").strip()
+    text = text.replace("```html", "").replace("```json", "").replace("```", "").strip()
 
-    # 앞뒤에 잡텍스트(예: ***, 설명 문구 등)가 붙어도 첫 '{' ~ 마지막 '}' 사이만 추출
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        text = text[start:end + 1]
+    if "[BODY]" not in text:
+        print(f"[경고] 응답에서 [BODY] 구분자를 못 찾음, 응답 원문 일부: {text[:500]}")
+        raise RuntimeError("Gemini 응답 형식이 예상과 다름 ([BODY] 구분자 없음)")
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"[경고] JSON 파싱 실패, 응답 원문 일부: {text[:500]}")
-        raise
+    title_part, body_part = text.split("[BODY]", 1)
+    title = title_part.replace("[TITLE]", "").strip()
+    html_body = body_part.strip()
+
+    if not title or not html_body:
+        print(f"[경고] 제목 또는 본문이 비어있음. title={title!r}, html_body 길이={len(html_body)}")
+        raise RuntimeError("Gemini 응답에서 제목 또는 본문을 제대로 못 뽑음")
+
+    return {"title": title, "html_body": html_body}
 
 
 # ---------- 구매 유도 이미지 카드 ----------
