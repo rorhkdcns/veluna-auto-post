@@ -29,12 +29,27 @@ from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
+from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials as SACredentials
 from googleapiclient.discovery import build
 from google import genai
 
 from category_map import classify
+
+# ---------- 카테고리별 고정 썸네일 ----------
+THUMBNAIL_FILES = {
+    "남성": "thumbnails/thumb_male.jpg",
+    "여성": "thumbnails/thumb_female.jpg",
+    "커플": "thumbnails/thumb_couple.jpg",
+}
+
+
+def get_category_thumbnail_url(category_label: str) -> str:
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    branch = "main"
+    path = THUMBNAIL_FILES.get(category_label, THUMBNAIL_FILES["커플"])
+    return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
 
 # ---------- 설정 ----------
 SHEET_TAB = "Sheet1"
@@ -140,6 +155,81 @@ def scrape_product_images(detail_url: str):
     }
 
 
+# ---------- 이미지 다운로드 & repo에 저장 (핫링크 차단 우회) ----------
+IMAGES_DIR = "images"
+
+
+def extract_seq(detail_url: str) -> str:
+    if "seq=" in detail_url:
+        return detail_url.split("seq=")[-1].split("&")[0]
+    return str(random.randint(100000, 999999))
+
+
+def download_image(url: str, referer: str) -> bytes | None:
+    headers = dict(UA_HEADERS)
+    headers["Referer"] = referer
+    try:
+        res = requests.get(url, headers=headers, timeout=15)
+        res.raise_for_status()
+        return res.content
+    except Exception as e:
+        print(f"[경고] 이미지 다운로드 실패: {url} ({e})")
+        return None
+
+
+def download_and_host_images(main_image: str, detail_images: list, detail_url: str):
+    """실제 상품 이미지들을 다운로드해서 repo의 images/{seq}/ 폴더에 저장하고,
+    raw.githubusercontent.com 주소 리스트를 반환함 (대표이미지 포함, 카테고리 썸네일은 별도 처리)"""
+    seq = extract_seq(detail_url)
+    repo = os.environ.get("GITHUB_REPOSITORY", "")  # 예: rorhkdcns/veluna-auto-post
+    branch = "main"
+
+    local_dir = os.path.join(IMAGES_DIR, seq)
+    os.makedirs(local_dir, exist_ok=True)
+
+    MAX_WIDTH = 1000  # 가로 1000px 초과시 축소
+    JPEG_QUALITY = 80  # 압축 품질 (0~100)
+
+    def save_and_get_url(url: str, filename: str):
+        content = download_image(url, referer=detail_url)
+        if content is None:
+            return None
+
+        try:
+            img = Image.open(io.BytesIO(content))
+            img = img.convert("RGB")  # webp/png -> jpg 저장을 위해 변환
+            if img.width > MAX_WIDTH:
+                new_height = int(img.height * (MAX_WIDTH / img.width))
+                img = img.resize((MAX_WIDTH, new_height), Image.LANCZOS)
+
+            local_path = os.path.join(local_dir, f"{filename}.jpg")
+            img.save(local_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
+        except Exception as e:
+            print(f"[경고] 이미지 처리 실패, 원본 그대로 저장: {url} ({e})")
+            ext = url.split(".")[-1].split("?")[0]
+            if len(ext) > 5:
+                ext = "webp"
+            local_path = os.path.join(local_dir, f"{filename}.{ext}")
+            with open(local_path, "wb") as f:
+                f.write(content)
+
+        raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{local_path}"
+        return raw_url
+
+    thumb_url = save_and_get_url(main_image, "detail_0") if main_image else None
+
+    detail_urls = []
+    if thumb_url:
+        detail_urls.append(thumb_url)
+    for i, src in enumerate(detail_images):
+        u = save_and_get_url(src, f"detail_{i+1}")
+        if u:
+            detail_urls.append(u)
+
+    print(f"[디버그] 실제 상품 이미지 저장 완료: {len(detail_urls)}장")
+    return detail_urls
+
+
 # ---------- Gemini로 포스팅 본문 생성 ----------
 def generate_post_content(product_name: str, category_label: str, category_raw: str,
                            price: int, detail_url: str) -> dict:
@@ -236,8 +326,10 @@ def main():
     category_label = classify(category_raw)
 
     scraped = scrape_product_images(detail_url)
-    main_image = scraped["main_image"]
-    detail_images = scraped["detail_images"]
+    detail_urls = download_and_host_images(
+        scraped["main_image"], scraped["detail_images"], detail_url
+    )
+    category_thumb_url = get_category_thumbnail_url(category_label)
 
     content = generate_post_content(
         product_name=product_name,
@@ -247,7 +339,7 @@ def main():
         detail_url=detail_url,
     )
 
-    thumb_html, detail_img_html = build_image_html(main_image, detail_images)
+    thumb_html, detail_img_html = build_image_html(category_thumb_url, detail_urls)
 
     # 최종 포스팅 HTML: 썸네일 -> 본문 -> 상세이미지 -> 구매링크
     final_html = f"""
