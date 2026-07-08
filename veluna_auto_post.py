@@ -137,6 +137,7 @@ def mark_posted(ws, row_index, header, post_url):
 def scrape_product_images(detail_url: str):
     res = requests.get(detail_url, headers=UA_HEADERS, timeout=15)
     res.raise_for_status()
+    print(f"[디버그] 상세페이지 접속 결과: HTTP {res.status_code}, 응답 크기 {len(res.text)}자")
     soup = BeautifulSoup(res.text, "html.parser")
 
     def resolve(src):
@@ -175,6 +176,10 @@ def scrape_product_images(detail_url: str):
 
     title_tag = soup.select_one(".item_detail_tit h3")
     page_title = title_tag.get_text(strip=True) if title_tag else None
+    if page_title:
+        print(f"[디버그] 페이지에서 읽은 실제 상품명: {page_title} (페이지 정상 로드 확인됨)")
+    else:
+        print("[경고] 페이지에서 상품명 자체를 못 읽음 → 페이지 구조가 다르거나 접근이 막혔을 가능성 있음")
 
     return {
         "main_image": main_img,
@@ -289,7 +294,8 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
   2. 인트로 문단 (소제목 없이, 2~3문장)
   3. 목차 (섹션 제목 리스트, ul 또는 ol 태그로)
   4. 섹션별 본문 (각 섹션 제목을 h2로, 그 안에 필요하면 h3 소제목)
-  5. 요약 박스가 될 내용 (핵심 포인트 3~4개, 불릿 리스트로. 박스 스타일은 스크립트가 감싸줄 예정이니 그냥 ul/li로만 작성)
+  5. 요약 박스 (핵심 포인트 3~4개, 불릿 리스트로. 반드시 아래처럼 감싸서 출력할 것 - 클래스명 그대로 지킬 것:
+     <div class="summary-box"><ul><li>포인트1</li><li>포인트2</li>...</ul></div>)
   6. FAQ (질문 3개 + 답변, h3나 strong으로 질문 표시)
   7. 마무리 문단 (소제목 없이, 구매를 자연스럽게 유도하되 링크는 절대 넣지 말 것 - 카드가 별도로 붙음)
 
@@ -369,6 +375,33 @@ def normalize_title(title: str) -> str:
     t = re.sub(r"\s{2,}", " ", t).strip(" ,.-")
 
     return f"{TITLE_PREFIX} {t}"
+
+
+# ---------- 요약 박스 스타일 처리 ----------
+def style_summary_box(html_body: str) -> str:
+    """Gemini가 <div class="summary-box">로 표시해준 요약 부분에
+    실제 테두리+배경 박스 스타일과 안내 제목을 입혀줌"""
+    try:
+        soup = BeautifulSoup(html_body, "html.parser")
+        box = soup.find("div", class_="summary-box")
+        if box is None:
+            return html_body
+
+        box["style"] = (
+            "border:1px solid #f0b8cc; border-left:5px solid #E75480; border-radius:10px; "
+            "background:#fff5f8; padding:20px 24px; margin:28px 0;"
+        )
+
+        heading = soup.new_tag("p", style=(
+            "margin:0 0 12px 0; font-weight:700; font-size:16px; color:#E75480;"
+        ))
+        heading.string = "💡 이것만은 꼭 기억하세요"
+        box.insert(0, heading)
+
+        return str(soup)
+    except Exception as e:
+        print(f"[경고] 요약 박스 스타일 처리 실패, 원본 그대로 사용: {e}")
+        return html_body
 
 
 # ---------- 목차 앵커 링크 처리 ----------
@@ -468,6 +501,9 @@ def main():
     category_label = classify(category_raw)
 
     scraped = scrape_product_images(detail_url)
+    if scraped.get("page_title"):
+        match = "일치" if product_name.strip() in scraped["page_title"] or scraped["page_title"] in product_name.strip() else "불일치(확인 필요)"
+        print(f"[검증] 시트 상품명 '{product_name}' vs 페이지 상품명 '{scraped['page_title']}' → {match}")
 
     product_thumb_url = download_and_host_product_thumbnail(scraped["main_image"], detail_url)
     category_thumb_url = get_category_thumbnail_url(category_label)
@@ -484,6 +520,7 @@ def main():
         price=price,
         detail_url=detail_url,
     )
+    content["html_body"] = style_summary_box(content["html_body"])
     content["html_body"] = add_toc_links(content["html_body"])
     content["title"] = normalize_title(content["title"])
 
