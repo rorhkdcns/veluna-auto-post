@@ -175,7 +175,7 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 """
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-flash-latest",
         contents=prompt,
     )
     text = response.text.strip()
