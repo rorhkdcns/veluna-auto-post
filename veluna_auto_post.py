@@ -25,6 +25,7 @@ import random
 import base64
 import pickle
 import io
+import re
 from datetime import datetime
 
 import requests
@@ -171,6 +172,7 @@ def download_image(url: str, referer: str) -> bytes | None:
     try:
         res = requests.get(url, headers=headers, timeout=15)
         res.raise_for_status()
+        print(f"[디버그] 다운로드 성공: {url} ({len(res.content)} bytes, content-type={res.headers.get('Content-Type')})")
         return res.content
     except Exception as e:
         print(f"[경고] 이미지 다운로드 실패: {url} ({e})")
@@ -231,6 +233,9 @@ def download_and_host_images(main_image: str, detail_images: list, detail_url: s
 
 
 # ---------- Gemini로 포스팅 본문 생성 ----------
+ACCENT_COLOR = "#B8860B"  # 키워드 강조색 (골드톤, 썸네일 디자인과 톤 맞춤)
+
+
 def generate_post_content(product_name: str, category_label: str, category_raw: str,
                            price: int, detail_url: str) -> dict:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -246,8 +251,16 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 - 구매링크: {detail_url}
 
 [작성 규칙]
+- 제목은 반드시 "[성인용품 벨루나]"로 시작할 것 (그 뒤에 상품 특징을 살린 매력적인 제목 이어붙이기)
+- 제목에 "솔직후기", "내돈내산" 같은 후기 프레이밍 문구는 절대 넣지 말 것 (정보성 제목으로)
 - 제품명은 노골적으로 그대로 사용해도 됨 (성인 인증된 사이트이므로)
 - 과도하게 선정적인 묘사보다는 제품 특징, 소재, 사용 편의성, 추천 대상 위주로 정보성 있게 작성
+- 글 전체에 구글 검색품질 평가 기준인 E-E-A-T(경험/전문성/권위성/신뢰성)가 자연스럽게 드러나도록 작성할 것:
+  실제 사용 경험을 연상시키는 구체적 디테일, 소재/원리에 대한 전문적 설명, 근거 있는 주의사항이나 관리법을 포함
+- 글의 설득 흐름은 PASONA 법칙(문제 제기 → 문제 공감·심화 → 해결책 제시 → 제안 → 대상 좁히기 → 행동 유도)을
+  자연스럽게 따르되, 이런 법칙 이름이나 단계 이름은 절대 본문에 표기하지 말고 매끄러운 글로만 녹여낼 것
+- 각 섹션마다 핵심 키워드(소재명, 기능명, 특징 등) 3~5개를 골라 <strong style="color:{ACCENT_COLOR};">키워드</strong> 형태로 볼드+컬러 강조할 것
+- 본문 텍스트 안에는 절대 <a> 링크 태그를 넣지 말 것 (구매 링크는 스크립트가 별도로 카드 형태로 삽입함)
 - 아래 포맷을 반드시 지킬 것:
   1. 제목 (매력적이고 검색엔진 친화적으로)
   2. 도입부 (2~3문장)
@@ -255,12 +268,12 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
   4. 본문 (섹션별로 나눠서 작성: 제품 특징, 이런 분께 추천, 사용 팁 등)
   5. 요약 박스 (핵심 포인트 3~4개, 불릿)
   6. FAQ (질문 3개 + 답변)
-  7. 결론 (구매링크 자연스럽게 언급)
+  7. 결론 (구매를 자연스럽게 유도하되, 링크는 절대 넣지 말 것 - 카드가 별도로 붙음)
 
 출력은 JSON 형식으로만 응답해. 다른 텍스트/설명/마크다운 코드블록 없이 아래 스키마 그대로:
 {{
   "title": "포스팅 제목",
-  "html_body": "완성된 HTML 본문 전체 (h2/h3/p/ul/li 태그 사용, 이미지 태그는 넣지 말 것 - 이미지는 스크립트가 별도로 삽입함)"
+  "html_body": "완성된 HTML 본문 전체 (h2/h3/p/ul/li/strong 태그 사용, 이미지·링크 태그는 넣지 말 것 - 스크립트가 별도로 삽입함)"
 }}
 """
 
@@ -271,6 +284,36 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
     text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
     return json.loads(text)
+
+
+# ---------- 구매 유도 이미지 카드 ----------
+def build_purchase_card_html(product_name: str, price: int, card_image_url: str, detail_url: str) -> str:
+    """텍스트 링크 대신, 이미지+상품명+버튼이 하나의 카드로 묶여
+    전체가 클릭 가능한 구매 유도 카드를 만듦"""
+    image_html = (
+        f'<img src="{card_image_url}" alt="{product_name}" '
+        f'style="width:100%;max-height:280px;object-fit:cover;display:block;">'
+        if card_image_url else ""
+    )
+
+    return f"""
+<a href="{detail_url}" target="_blank" rel="nofollow"
+   style="text-decoration:none; display:block; max-width:480px; margin:30px auto;
+          border-radius:14px; overflow:hidden; background:#1c1c1c;
+          box-shadow:0 4px 16px rgba(0,0,0,0.25); border:1px solid #333;">
+  {image_html}
+  <div style="padding:18px 20px;">
+    <p style="margin:0 0 6px 0; color:#e8c46a; font-size:13px; letter-spacing:1px;">VELUNA MALL</p>
+    <p style="margin:0 0 12px 0; color:#ffffff; font-size:17px; font-weight:700; line-height:1.4;">{product_name}</p>
+    <p style="margin:0 0 16px 0; color:#f2f2f2; font-size:15px;">{price:,}원</p>
+    <div style="text-align:center; padding:12px 0; border-radius:8px;
+                background:linear-gradient(135deg,#c9a227,#e8c46a);
+                color:#1c1c1c; font-weight:700; font-size:15px;">
+      지금 구매하러 가기 →
+    </div>
+  </div>
+</a>
+""".strip()
 
 
 # ---------- 이미지 HTML 블록 생성 ----------
@@ -286,6 +329,61 @@ def build_image_html(main_image: str, detail_images: list) -> tuple[str, str]:
     detail_html = "\n".join(detail_html_parts)
 
     return thumb_html, detail_html
+
+
+TITLE_PREFIX = "[성인용품 벨루나]"
+BANNED_TITLE_PATTERNS = [r"솔직\s*후기", r"내돈\s*내산", r"리얼\s*후기", r"실사용\s*후기"]
+
+
+def normalize_title(title: str) -> str:
+    t = title.strip()
+
+    # 금지 문구 제거 (띄어쓰기 변형 포함)
+    for pattern in BANNED_TITLE_PATTERNS:
+        t = re.sub(pattern, "", t)
+
+    # 기존에 다른 형태의 대괄호 접두어가 붙어있으면 제거 후 통일된 접두어로 교체
+    t = re.sub(r"^\[[^\]]*\]\s*", "", t).strip()
+    t = re.sub(r"\s{2,}", " ", t).strip(" ,.-")
+
+    return f"{TITLE_PREFIX} {t}"
+
+
+# ---------- 목차 앵커 링크 처리 ----------
+def add_toc_links(html_body: str) -> str:
+    """본문의 h2 소제목마다 id를 붙이고, 그 앞에 나오는 목차 리스트(ul)를
+    클릭하면 해당 소제목으로 이동하는 링크로 바꿔줌"""
+    try:
+        soup = BeautifulSoup(html_body, "html.parser")
+        h2_tags = soup.find_all("h2")
+        if not h2_tags:
+            return html_body
+
+        for i, h2 in enumerate(h2_tags, start=1):
+            h2["id"] = f"section-{i}"
+
+        # 첫 h2보다 앞에 나오는 모든 ul 중 마지막 것(=목차 바로 그 리스트일 가능성이 높음)
+        first_h2 = h2_tags[0]
+        candidate_uls = []
+        for el in first_h2.find_all_previous("ul"):
+            candidate_uls.append(el)
+        toc_ul = candidate_uls[0] if candidate_uls else None  # find_all_previous는 가까운 순
+
+        if toc_ul is not None:
+            items = toc_ul.find_all("li", recursive=False)
+            for i, li in enumerate(items, start=1):
+                if i > len(h2_tags):
+                    break
+                text = li.get_text(strip=True)
+                a_tag = soup.new_tag("a", href=f"#section-{i}")
+                a_tag.string = text
+                li.clear()
+                li.append(a_tag)
+
+        return str(soup)
+    except Exception as e:
+        print(f"[경고] 목차 링크 처리 실패, 원본 그대로 사용: {e}")
+        return html_body
 
 
 # ---------- Blogger 업로드 ----------
@@ -326,6 +424,10 @@ def main():
     category_label = classify(category_raw)
 
     scraped = scrape_product_images(detail_url)
+    print(f"[디버그] 스크래핑된 대표이미지: {scraped['main_image']}")
+    print(f"[디버그] 스크래핑된 상세이미지 개수: {len(scraped['detail_images'])}")
+    if scraped['detail_images']:
+        print(f"[디버그] 상세이미지 예시(첫번째): {scraped['detail_images'][0]}")
     detail_urls = download_and_host_images(
         scraped["main_image"], scraped["detail_images"], detail_url
     )
@@ -338,18 +440,21 @@ def main():
         price=price,
         detail_url=detail_url,
     )
+    content["html_body"] = add_toc_links(content["html_body"])
+    content["title"] = normalize_title(content["title"])
 
     thumb_html, detail_img_html = build_image_html(category_thumb_url, detail_urls)
 
-    # 최종 포스팅 HTML: 썸네일 -> 본문 -> 상세이미지 -> 구매링크
+    card_image_url = detail_urls[0] if detail_urls else category_thumb_url
+    purchase_card_html = build_purchase_card_html(product_name, price, card_image_url, detail_url)
+
+    # 최종 포스팅 HTML: 썸네일 -> 본문 -> 상세이미지 -> 구매 카드
     final_html = f"""
 {thumb_html}
 {content['html_body']}
 <h3>상품 상세 이미지</h3>
 {detail_img_html}
-<p style="text-align:center;margin-top:20px;">
-  <a href="{detail_url}" target="_blank" rel="nofollow">👉 상품 자세히 보러가기</a>
-</p>
+{purchase_card_html}
 """.strip()
 
     post_url = post_to_blogger(content["title"], final_html)
