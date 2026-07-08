@@ -1,0 +1,28 @@
+name: veluna-auto-post
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 매일 UTC 03:00 (한국시간 낮 12시) - 원하는 시간으로 수정 가능
+  workflow_dispatch:        # 수동 실행 버튼
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run auto post
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOGGER_TOKEN_PICKLE_B64: ${{ secrets.BLOGGER_TOKEN_PICKLE_B64 }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: python veluna_auto_post.py
