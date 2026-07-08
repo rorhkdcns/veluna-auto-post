@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-벨루나몰(velunamall.com) 상품 -> 블로그 자동 포스팅 스크립트 (Imgur 이미지 호스팅 적용 버전)
+벨루나몰(velunamall.com) 상품 -> 블로그 자동 포스팅 스크립트 (Imgur 적용 + 중간 구매카드 삽입)
 
 흐름:
 1. Google Sheet에서 '포스팅완료'가 비어있는 상품 중 랜덤 1개 선택
 2. 상품상세URL 스크래핑 -> 실제 상품 이미지(썸네일) 추출
 3. 카테고리 -> 남성/여성/커플 분류 (category_map.py)
-4. 이미지를 Imgur API로 전송하여 새로운 URL 발급 (핫링크 차단 우회 및 저장소 용량 절약)
+4. 이미지를 Imgur API로 전송하여 새로운 URL 발급
 5. Gemini API로 포스팅 본문 생성
-6. Blogger API로 포스팅 업로드
-7. 포스팅 완료된 행에 '포스팅완료' 표시 (타임스탬프 + 포스팅 URL)
-
-필요 환경변수 (GitHub Actions Secrets로 등록):
-- GOOGLE_SHEETS_CREDENTIALS : 서비스 계정 JSON 전체 내용 (문자열)
-- SPREADSHEET_ID            : 구글시트 ID
-- GEMINI_API_KEY            : Gemini API 키
-- BLOGGER_TOKEN_PICKLE_B64  : Blogger OAuth token.pickle을 base64 인코딩한 문자열
-- BLOGGER_BLOG_ID           : 포스팅할 Blogger 블로그 ID
-- IMGUR_CLIENT_ID           : Imgur API Client ID (무료 발급)
+6. Blogger API로 포스팅 업로드 (중간 및 하단 구매카드 포함)
+7. 포스팅 완료된 행에 '포스팅완료' 표시
 """
 
 import os
@@ -67,7 +59,7 @@ def get_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
-    # 💡 탭 이름(Sheet1/시트1) 에러 방지: 이름과 무관하게 무조건 첫 번째 탭(0)을 사용
+    # 탭 이름 에러 방지: 첫 번째 탭 강제 사용
     return sh.get_worksheet(0)
 
 EXPECTED_FIRST_HEADER = "인덱스(변경불가)"
@@ -76,7 +68,6 @@ def pick_unposted_row(ws):
     all_values = ws.get_all_values()
     print(f"[디버그] 시트 전체 행 수: {len(all_values)}")
 
-    # 헤더 행을 자동으로 탐색
     header_row_idx = None
     for idx, row in enumerate(all_values):
         if row and row[0].strip() == EXPECTED_FIRST_HEADER:
@@ -85,14 +76,13 @@ def pick_unposted_row(ws):
 
     if header_row_idx is None:
         raise RuntimeError(
-            f"헤더를 찾지 못함: '{EXPECTED_FIRST_HEADER}'로 시작하는 행이 시트에 없음. "
+            f"헤더를 찾지 못함: '{EXPECTED_FIRST_HEADER}'로 시작하는 행이 시트에 없음."
         )
 
     header = all_values[header_row_idx]
-    sheet_header_row_num = header_row_idx + 1  # 실제 시트상 행 번호(1-based)
+    sheet_header_row_num = header_row_idx + 1
     print(f"[디버그] 헤더를 {sheet_header_row_num}행에서 찾음")
 
-    # '포스팅완료' 열 위치를 동적으로 찾거나 추가
     if POSTED_COL_NAME in header:
         posted_col_idx = header.index(POSTED_COL_NAME)
         posted_col_num = posted_col_idx + 1
@@ -106,7 +96,7 @@ def pick_unposted_row(ws):
     candidates = []
     data_rows = all_values[header_row_idx + 1:]
     for offset, row_values in enumerate(data_rows):
-        sheet_row_num = header_row_idx + 2 + offset  # 실제 시트상 행 번호(1-based)
+        sheet_row_num = header_row_idx + 2 + offset
         posted_val = row_values[posted_col_idx] if posted_col_idx < len(row_values) else ""
         if not posted_val.strip():
             row_dict = dict(zip(header, row_values + [""] * max(0, len(header) - len(row_values))))
@@ -154,9 +144,8 @@ def scrape_product_images(detail_url: str):
         "page_title": page_title,
     }
 
-# ---------- Imgur API를 활용한 이미지 업로드 (핫링크 우회) ----------
+# ---------- Imgur API를 활용한 이미지 업로드 ----------
 def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
-    """쇼핑몰 이미지를 다운로드하여 즉시 Imgur에 업로드하고 새 URL을 반환"""
     if not image_url:
         return None
 
@@ -171,7 +160,7 @@ def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
 
     imgur_client_id = os.environ.get("IMGUR_CLIENT_ID")
     if not imgur_client_id:
-        raise RuntimeError("IMGUR_CLIENT_ID 환경변수가 설정되지 않았습니다. API 키를 추가해주세요.")
+        raise RuntimeError("IMGUR_CLIENT_ID 환경변수가 설정되지 않았습니다.")
 
     imgur_headers = {"Authorization": f"Client-ID {imgur_client_id}"}
     try:
@@ -190,7 +179,7 @@ def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
         return None
 
 # ---------- Gemini로 포스팅 본문 생성 ----------
-ACCENT_COLOR = "#E75480"  # 키워드 강조색
+ACCENT_COLOR = "#E75480"
 
 def generate_post_content(product_name: str, category_label: str, category_raw: str,
                            price: int, detail_url: str) -> dict:
@@ -211,17 +200,13 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 - 제목에 "솔직후기", "내돈내산" 같은 후기 프레이밍 문구는 절대 넣지 말 것 (정보성 제목으로)
 - 제품명은 노골적으로 그대로 사용해도 됨 (성인 인증된 사이트이므로)
 - 과도하게 선정적인 묘사보다는 제품 특징, 소재, 사용 편의성, 추천 대상 위주로 정보성 있게 작성
-- 글 전체에 구글 검색품질 평가 기준인 E-E-A-T(경험/전문성/권위성/신뢰성)가 자연스럽게 드러나도록 작성할 것:
-  실제 사용 경험을 연상시키는 구체적 디테일, 소재/원리에 대한 전문적 설명, 근거 있는 주의사항이나 관리법을 포함
-- 글의 설득 흐름은 PASONA 법칙(문제 제기 → 문제 공감·심화 → 해결책 제시 → 제안 → 대상 좁히기 → 행동 유도)을
-  자연스럽게 따르되, 이런 법칙 이름이나 단계 이름은 절대 본문에 표기하지 말고 매끄러운 글로만 녹여낼 것
+- 글 전체에 구글 검색품질 평가 기준인 E-E-A-T(경험/전문성/권위성/신뢰성)가 자연스럽게 드러나도록 작성할 것
+- 글의 설득 흐름은 PASONA 법칙을 자연스럽게 따르되, 이런 법칙 이름이나 단계 이름은 절대 본문에 표기하지 말 것
 - 각 섹션마다 핵심 키워드(소재명, 기능명, 특징 등) 3~5개를 골라 <strong style="color:{ACCENT_COLOR};">키워드</strong> 형태로 볼드+컬러 강조할 것
 - 본문 텍스트 안에는 절대 <a> 링크 태그를 넣지 말 것 (구매 링크는 스크립트가 별도로 카드 형태로 삽입함)
-- 아래 포맷을 반드시 지킬 것:
-- 문체는 딱딱한 정보전달체가 아니라, 친한 사람이 조곤조곤 이야기해주듯 부드럽고 다정한 말투(해요체)로 쓸 것.
-  단정적이고 건조한 "~합니다/~됩니다" 나열보다는, 공감하는 말투와 자연스러운 구어체 표현을 섞어서 쓸 것
+- 문체는 친한 사람이 조곤조곤 이야기해주듯 부드럽고 다정한 말투(해요체)로 쓸 것.
 - "도입부", "본문", "결론" 같은 구조를 그대로 드러내는 라벨/소제목은 절대 쓰지 말 것.
-  인트로 문단은 소제목 없이 바로 시작하고, 각 섹션은 실제 주제를 담은 소제목만 h2로 쓰고 그 소제목들을 다시 "본문"이라는 상위 라벨로 묶지 말 것.
+  인트로 문단은 소제목 없이 바로 시작하고, 각 섹션은 실제 주제를 담은 소제목만 h2로 쓸 것.
 - 아래 내용 순서를 지키되, 위에서 말한 라벨은 쓰지 말 것:
   1. 제목 (매력적이고 검색엔진 친화적으로)
   2. 인트로 문단 (소제목 없이, 2~3문장)
@@ -240,7 +225,6 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 [BODY]
 여기에 완성된 HTML 본문 전체 (이미지·링크 태그 제외)
 """
-    # 💡 최신, 더 빠르고 성능이 좋은 2.5-flash 모델로 변경 적용
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
@@ -297,7 +281,7 @@ def normalize_title(title: str) -> str:
     t = re.sub(r"\s{2,}", " ", t).strip(" ,.-")
     return f"{TITLE_PREFIX} {t}"
 
-# ---------- HTML 본문 후처리 (요약 박스, 목차 링크) ----------
+# ---------- HTML 본문 후처리 (요약 박스, 목차, 중간 카드 삽입) ----------
 def style_summary_box(html_body: str) -> str:
     try:
         soup = BeautifulSoup(html_body, "html.parser")
@@ -362,6 +346,27 @@ def add_toc_links(html_body: str) -> str:
     except:
         return html_body
 
+# 💡 새롭게 추가된 기능: 본문 중간에 구매 카드 삽입
+def insert_middle_purchase_card(html_body: str, card_html: str) -> str:
+    """본문의 섹션(h2 태그) 개수를 파악하여 정확히 중간 위치에 구매 카드를 추가합니다."""
+    try:
+        soup = BeautifulSoup(html_body, "html.parser")
+        h2_tags = soup.find_all("h2")
+        
+        # 섹션이 2개 이상일 때만 본문 중간에 삽입
+        if len(h2_tags) >= 2:
+            mid_idx = len(h2_tags) // 2
+            target_h2 = h2_tags[mid_idx]
+            
+            card_soup = BeautifulSoup(card_html, "html.parser")
+            target_h2.insert_before(card_soup)
+            return str(soup)
+        
+        return html_body
+    except Exception as e:
+        print(f"[경고] 중간 구매 카드 삽입 실패: {e}")
+        return html_body
+
 # ---------- Blogger 업로드 ----------
 def get_blogger_service():
     token_b64 = os.environ["BLOGGER_TOKEN_PICKLE_B64"]
@@ -386,7 +391,6 @@ def main():
     category_raw = row.get("카테고리(변경불가)", "")
     detail_url = row.get("제품상세URL(변경불가)")
     
-    # 💡 안전한 숫자 형변환 (문자, 콤마, 빈칸 등 보호 처리)
     price_str = str(row.get("일반가(변경불가)", "0"))
     price = int(re.sub(r'[^0-9]', '', price_str) or 0)
 
@@ -396,7 +400,6 @@ def main():
     category_label = classify(category_raw)
     scraped = scrape_product_images(detail_url)
 
-    # 💡 로컬 저장 대신 Imgur로 바로 업로드 (깃허브 용량/404 문제 완벽 해결)
     product_thumb_url = upload_thumbnail_to_imgur(scraped["main_image"], detail_url)
     category_thumb_url = get_category_thumbnail_url(category_label)
 
@@ -407,8 +410,14 @@ def main():
         price=price,
         detail_url=detail_url,
     )
+    
+    card_image_url = product_thumb_url or category_thumb_url
+    purchase_card_html = build_purchase_card_html(product_name, price, card_image_url, detail_url)
+
+    # 💡 HTML 후처리 단계 (순서: 요약박스 -> 목차 -> ❗중간 카드 삽입❗)
     content["html_body"] = style_summary_box(content["html_body"])
     content["html_body"] = add_toc_links(content["html_body"])
+    content["html_body"] = insert_middle_purchase_card(content["html_body"], purchase_card_html)
     content["title"] = normalize_title(content["title"])
 
     category_thumb_html = f'<p style="text-align:center;margin:0 0 24px 0;"><img src="{category_thumb_url}" alt="{category_label}용품" style="max-width:100%;"></p>'
@@ -417,9 +426,7 @@ def main():
         if product_thumb_url else ""
     )
 
-    card_image_url = product_thumb_url or category_thumb_url
-    purchase_card_html = build_purchase_card_html(product_name, price, card_image_url, detail_url)
-
+    # 최종 병합: (하단에도 기존처럼 카드가 들어갑니다)
     final_html = f"""
 {category_thumb_html}
 {content['html_body']}
