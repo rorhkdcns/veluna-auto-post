@@ -307,6 +307,13 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
     )
     text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
+
+    # 앞뒤에 잡텍스트(예: ***, 설명 문구 등)가 붙어도 첫 '{' ~ 마지막 '}' 사이만 추출
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
@@ -320,23 +327,24 @@ def build_purchase_card_html(product_name: str, price: int, card_image_url: str,
     전체가 클릭 가능한 구매 유도 카드를 만듦"""
     image_html = (
         f'<img src="{card_image_url}" alt="{product_name}" '
-        f'style="width:100%;max-height:280px;object-fit:cover;display:block;">'
+        f'style="width:100%;max-height:280px;object-fit:cover;display:block;'
+        f'border-top-left-radius:14px;border-top-right-radius:14px;">'
         if card_image_url else ""
     )
 
     return f"""
 <a href="{detail_url}" target="_blank" rel="nofollow"
-   style="text-decoration:none; display:block; max-width:480px; margin:30px auto;
+   style="text-decoration:none; display:block; max-width:480px; margin:40px auto;
           border-radius:14px; overflow:hidden; background:#1c1c1c;
           box-shadow:0 4px 16px rgba(0,0,0,0.25); border:1px solid #333;">
   {image_html}
-  <div style="padding:18px 20px;">
-    <p style="margin:0 0 6px 0; color:#e8c46a; font-size:13px; letter-spacing:1px;">VELUNA MALL</p>
-    <p style="margin:0 0 12px 0; color:#ffffff; font-size:17px; font-weight:700; line-height:1.4;">{product_name}</p>
-    <p style="margin:0 0 16px 0; color:#f2f2f2; font-size:15px;">{price:,}원</p>
-    <div style="text-align:center; padding:12px 0; border-radius:8px;
-                background:linear-gradient(135deg,#c9a227,#e8c46a);
-                color:#1c1c1c; font-weight:700; font-size:15px;">
+  <div style="padding:22px 24px; clear:both;">
+    <p style="margin:0 0 8px 0; color:#ff9ec4; font-size:14px; letter-spacing:1px; font-weight:600;">VELUNA MALL</p>
+    <p style="margin:0 0 14px 0; color:#ffffff; font-size:20px; font-weight:700; line-height:1.4;">{product_name}</p>
+    <p style="margin:0 0 20px 0; color:#f2f2f2; font-size:18px; font-weight:600;">{price:,}원</p>
+    <div style="text-align:center; padding:16px 0; border-radius:10px;
+                background:linear-gradient(135deg,#E75480,#ff8fab);
+                color:#ffffff; font-weight:700; font-size:18px;">
       지금 구매하러 가기 →
     </div>
   </div>
@@ -479,10 +487,10 @@ def main():
     content["html_body"] = add_toc_links(content["html_body"])
     content["title"] = normalize_title(content["title"])
 
-    category_thumb_html = f'<p style="text-align:center;"><img src="{category_thumb_url}" alt="{category_label}용품" style="max-width:100%;"></p>'
+    category_thumb_html = f'<p style="text-align:center;margin:0 0 24px 0;"><img src="{category_thumb_url}" alt="{category_label}용품" style="max-width:100%;"></p>'
 
     product_thumb_html = (
-        f'<p style="text-align:center;"><img src="{product_thumb_url}" alt="{product_name}" style="max-width:100%;"></p>'
+        f'<p style="text-align:center;margin:24px 0;"><img src="{product_thumb_url}" alt="{product_name}" style="max-width:100%;"></p>'
         if product_thumb_url else ""
     )
 
