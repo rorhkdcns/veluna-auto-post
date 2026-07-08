@@ -52,7 +52,6 @@ def get_category_thumbnail_url(category_label: str) -> str:
     return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
 
 # ---------- 설정 ----------
-SHEET_TAB = "Sheet1"
 POSTED_COL_NAME = "포스팅완료"
 UA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -68,7 +67,8 @@ def get_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
-    return sh.worksheet(SHEET_TAB)  # 하드코딩 제거, 지정한 탭 사용
+    # 💡 탭 이름(Sheet1/시트1) 에러 방지: 이름과 무관하게 무조건 첫 번째 탭(0)을 사용
+    return sh.get_worksheet(0)
 
 EXPECTED_FIRST_HEADER = "인덱스(변경불가)"
 
