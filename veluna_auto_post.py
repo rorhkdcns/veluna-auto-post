@@ -57,23 +57,36 @@ def get_sheet():
 
 
 def pick_unposted_row(ws):
-    records = ws.get_all_records()  # list of dict, header 기준
-    header = ws.row_values(1)
+    all_values = ws.get_all_values()
+    header = all_values[0]
+
+    # 빈 헤더 셀 제거 (뒤쪽 빈 열들 때문에 발생하는 중복 에러 방지)
+    last_col = len(header)
+    while last_col > 0 and not header[last_col - 1].strip():
+        last_col -= 1
+    header = header[:last_col]
 
     if POSTED_COL_NAME not in header:
         # 없으면 마지막 열에 헤더 추가
         ws.update_cell(1, len(header) + 1, POSTED_COL_NAME)
         header.append(POSTED_COL_NAME)
+        last_col += 1
+
+    posted_col_idx = header.index(POSTED_COL_NAME)
 
     candidates = []
-    for i, row in enumerate(records, start=2):  # 2행부터 실제 데이터
-        if not row.get(POSTED_COL_NAME):
-            candidates.append((i, row))
+    for i, row_values in enumerate(all_values[1:], start=2):  # 2행부터 실제 데이터
+        row_values = row_values[:last_col] + [""] * max(0, last_col - len(row_values))
+        posted_val = row_values[posted_col_idx] if posted_col_idx < len(row_values) else ""
+        if not posted_val.strip():
+            row_dict = dict(zip(header, row_values))
+            candidates.append((i, row_dict))
 
     if not candidates:
         raise RuntimeError("포스팅 가능한 상품이 없음 (전부 포스팅완료 상태)")
 
-    return random.choice(candidates)  # (row_index, row_dict)
+    chosen_index, chosen_row = random.choice(candidates)
+    return chosen_index, chosen_row, header
 
 
 def mark_posted(ws, row_index, header, post_url):
@@ -188,9 +201,8 @@ def post_to_blogger(title: str, content_html: str) -> str:
 # ---------- 메인 ----------
 def main():
     ws = get_sheet()
-    header = ws.row_values(1)
 
-    row_index, row = pick_unposted_row(ws)
+    row_index, row, header = pick_unposted_row(ws)
 
     product_name = row.get("본사상품명(변경불가)") or row.get("내상품명") or "상품"
     category_raw = row.get("카테고리(변경불가)", "")
