@@ -27,6 +27,7 @@ import pickle
 import io
 import re
 from datetime import datetime
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -138,12 +139,31 @@ def scrape_product_images(detail_url: str):
     res.raise_for_status()
     soup = BeautifulSoup(res.text, "html.parser")
 
-    # 메인(대표) 이미지
+    def resolve(src):
+        if not src:
+            return None
+        abs_url = urljoin(detail_url, src)
+        if "sample" in abs_url.lower():  # 실제 사진 없는 상품의 기본 샘플 이미지는 제외
+            return None
+        return abs_url
+
+    # 1순위: 상세페이지 대표이미지
     main_img_tag = soup.select_one(".item_photo_big img")
-    main_img = main_img_tag["src"] if main_img_tag else None
+    main_img = resolve(main_img_tag["src"]) if main_img_tag else None
+
+    # 2순위: og:image 메타태그 (검색/공유용 대표이미지, 갤러리와 다른 소스일 수 있음)
+    if not main_img:
+        og_tag = soup.select_one('meta[property="og:image"]')
+        if og_tag and og_tag.get("content"):
+            main_img = resolve(og_tag["content"])
+            if main_img:
+                print(f"[디버그] 대표이미지를 og:image에서 대체 확보: {main_img}")
 
     # 상세설명 이미지들 (실제 상품 사진 나열)
-    detail_imgs = [img["src"] for img in soup.select(".viewimg img") if img.get("src")]
+    detail_imgs = [
+        resolve(img["src"]) for img in soup.select(".viewimg img") if img.get("src")
+    ]
+    detail_imgs = [u for u in detail_imgs if u]
 
     # 실제 상품명 (엑셀/시트 값과 다를 수 있어 검증용으로 같이 반환)
     title_tag = soup.select_one(".item_detail_tit h3")
@@ -280,10 +300,15 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
     response = client.models.generate_content(
         model="gemini-flash-latest",
         contents=prompt,
+        config={"response_mime_type": "application/json"},
     )
     text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[경고] JSON 파싱 실패, 응답 원문 일부: {text[:500]}")
+        raise
 
 
 # ---------- 구매 유도 이미지 카드 ----------
@@ -448,12 +473,13 @@ def main():
     card_image_url = detail_urls[0] if detail_urls else category_thumb_url
     purchase_card_html = build_purchase_card_html(product_name, price, card_image_url, detail_url)
 
+    detail_section_html = f"<h3>상품 상세 이미지</h3>\n{detail_img_html}" if detail_urls else ""
+
     # 최종 포스팅 HTML: 썸네일 -> 본문 -> 상세이미지 -> 구매 카드
     final_html = f"""
 {thumb_html}
 {content['html_body']}
-<h3>상품 상세 이미지</h3>
-{detail_img_html}
+{detail_section_html}
 {purchase_card_html}
 """.strip()
 
