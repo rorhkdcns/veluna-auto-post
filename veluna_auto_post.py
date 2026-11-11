@@ -19,9 +19,11 @@ import base64
 import pickle
 import re
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials as SACredentials
@@ -115,10 +117,68 @@ def mark_posted(ws, row_index, posted_col_num, post_url):
     ws.update_cell(row_index, posted_col_num, value)
 
 # ---------- 상품 상세페이지 스크래핑 ----------
+def _get_retry_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=1.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.headers.update(UA_HEADERS)
+    return session
+
 def scrape_product_images(detail_url: str):
-    res = requests.get(detail_url, headers=UA_HEADERS, timeout=15)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "html.parser")
+    session = _get_retry_session()
+    html_text = None
+
+    target_urls = [detail_url]
+    if detail_url.startswith("https://"):
+        target_urls.append(detail_url.replace("https://", "http://", 1))
+
+    for url in target_urls:
+        try:
+            res = session.get(url, timeout=(8, 15))
+            res.raise_for_status()
+            if res.encoding and res.encoding.lower() in ["iso-8859-1", "euc-kr", "ks_c_5601-1987"]:
+                res.encoding = "cp949"
+            else:
+                res.encoding = res.apparent_encoding or "utf-8"
+            html_text = res.text
+            break
+        except Exception as e:
+            print(f"[경고] 상세페이지 직접 연결 실패 ({url}): {e}")
+
+    if not html_text:
+        encoded_url = quote(detail_url, safe="")
+        fallback_proxies = [
+            f"https://api.allorigins.win/raw?url={encoded_url}",
+            f"https://api.codetabs.com/v1/proxy?quest={encoded_url}",
+        ]
+        for proxy_url in fallback_proxies:
+            try:
+                print(f"[디버그] 해외 IP 차단 우회 경로로 스크래핑 재시도 중...")
+                res = requests.get(proxy_url, headers=UA_HEADERS, timeout=(10, 20))
+                if res.status_code == 200 and len(res.text) > 300:
+                    html_text = res.text
+                    print("[디버그] 우회 경로를 통한 HTML 확보 성공")
+                    break
+            except Exception as e:
+                print(f"[경고] 우회 스크래핑 실패: {e}")
+
+    if not html_text:
+        print("[경고] 상세페이지 접근 불가로 이미지 추출을 건너뜁니다. (카테고리 고정 썸네일 사용)")
+        return {
+            "main_image": None,
+            "page_title": None,
+        }
+
+    soup = BeautifulSoup(html_text, "html.parser")
 
     def resolve(src):
         if not src: return None
@@ -151,11 +211,25 @@ def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
 
     headers = dict(UA_HEADERS)
     headers["Referer"] = referer
-    try:
-        res = requests.get(image_url, headers=headers, timeout=15)
-        res.raise_for_status()
-    except Exception as e:
-        print(f"[경고] 쇼핑몰 이미지 임시 다운로드 실패: {image_url} ({e})")
+    img_bytes = None
+
+    download_candidates = [
+        image_url,
+        f"https://wsrv.nl/?url={quote(image_url, safe='')}",
+    ]
+
+    for candidate_url in download_candidates:
+        try:
+            res = requests.get(candidate_url, headers=headers, timeout=(8, 15))
+            res.raise_for_status()
+            if res.content and len(res.content) > 500:
+                img_bytes = res.content
+                break
+        except Exception as e:
+            print(f"[경고] 쇼핑몰 이미지 다운로드 시도 실패: {candidate_url} ({e})")
+
+    if not img_bytes:
+        print(f"[경고] 쇼핑몰 이미지 최종 다운로드 실패: {image_url}")
         return None
 
     imgur_client_id = os.environ.get("IMGUR_CLIENT_ID")
@@ -167,7 +241,7 @@ def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
         upload_res = requests.post(
             "https://api.imgur.com/3/image",
             headers=imgur_headers,
-            files={"image": res.content},
+            files={"image": img_bytes},
             timeout=20
         )
         upload_res.raise_for_status()
@@ -182,7 +256,7 @@ def upload_thumbnail_to_imgur(image_url: str, referer: str) -> str:
 ACCENT_COLOR = "#E75480"
 
 def generate_post_content(product_name: str, category_label: str, category_raw: str,
-                           price: int, detail_url: str) -> dict:
+                          price: int, detail_url: str) -> dict:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     prompt = f"""
