@@ -270,7 +270,7 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 - 구매링크: {detail_url}
 
 [작성 규칙]
-- 제목은 반드시 "[성인용품 벨루나]"로 시작할 것 (그 뒤에 상품 특징을 살린 매력적인 제목 이어붙이기)
+- 제목은 반드시 "[성인용품 사이트 벨루나]"로 시작할 것 (그 뒤에 상품 특징을 살린 매력적인 제목 이어붙이기)
 - 제목에 "솔직후기", "내돈내산" 같은 후기 프레이밍 문구는 절대 넣지 말 것 (정보성 제목으로)
 - 제품명은 노골적으로 그대로 사용해도 됨 (성인 인증된 사이트이므로)
 - 과도하게 선정적인 묘사보다는 제품 특징, 소재, 사용 편의성, 추천 대상 위주로 정보성 있게 작성
@@ -290,7 +290,8 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
      <div class="summary-box"><ul><li>포인트1</li><li>포인트2</li>...</ul></div>)
   6. FAQ (질문 3개 + 답변, h3나 strong으로 질문 표시)
   7. 마무리 문단 (소제목 없이, 구매를 자연스럽게 유도하되 링크는 절대 넣지 말 것)
-
+  8. 1만여개의 상품이 있고, 비밀포장으로 안전하게 배송한다는 문구넣기.
+  9. https://velunamall.com 링크 넣기
 출력 형식은 JSON이 아니라 아래 구분자 형식으로만 출력할 것:
 
 [TITLE]
