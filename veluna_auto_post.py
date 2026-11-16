@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-벨루나몰(velunamall.com) 상품 -> 블로그 자동 포스팅 스크립트 (Imgur 적용 + 중간 구매카드 삽입)
+벨루나몰(velunamall.com) 상품 -> 블로그 자동 포스팅 스크립트 (Imgur 적용 + 중간 구매카드 + 하단 안심배너 삽입)
 
 흐름:
 1. Google Sheet에서 '포스팅완료'가 비어있는 상품 중 랜덤 1개 선택
@@ -8,7 +8,7 @@
 3. 카테고리 -> 남성/여성/커플 분류 (category_map.py)
 4. 이미지를 Imgur API로 전송하여 새로운 URL 발급
 5. Gemini API로 포스팅 본문 생성
-6. Blogger API로 포스팅 업로드 (중간 및 하단 구매카드 포함)
+6. Blogger API로 포스팅 업로드 (중간/하단 구매카드 및 안심 배송 안내 박스 포함)
 7. 포스팅 완료된 행에 '포스팅완료' 표시
 """
 
@@ -270,7 +270,7 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
 - 구매링크: {detail_url}
 
 [작성 규칙]
-- 제목은 반드시 "성인용품 사이트|벨루나"로 시작할 것 (그 뒤에 상품 특징을 살린 매력적인 제목 이어붙이기)
+- 제목은 반드시 "성인용품 전문쇼핑몰 사이트 벨루나| {product_name}"으로 시작하고, 그 뒤에 상품의 핵심 특징을 살린 매력적인 문구를 자연스럽게 이어붙일 것
 - 제목에 "솔직후기", "내돈내산" 같은 후기 프레이밍 문구는 절대 넣지 말 것 (정보성 제목으로)
 - 제품명은 노골적으로 그대로 사용해도 됨 (성인 인증된 사이트이므로)
 - 과도하게 선정적인 묘사보다는 제품 특징, 소재, 사용 편의성, 추천 대상 위주로 정보성 있게 작성
@@ -289,9 +289,12 @@ def generate_post_content(product_name: str, category_label: str, category_raw: 
   5. 요약 박스 (핵심 포인트 3~4개, 불릿 리스트로. 반드시 아래처럼 감싸서 출력할 것:
      <div class="summary-box"><ul><li>포인트1</li><li>포인트2</li>...</ul></div>)
   6. FAQ (질문 3개 + 답변, h3나 strong으로 질문 표시)
-  7. 마무리 문단 (소제목 없이, 구매를 자연스럽게 유도하되 링크는 절대 넣지 말 것)
-  8. 1만여개의 상품이 있고, 비밀포장으로 안전하게 배송한다는 문구넣기.
-  9. https://velunamall.com 링크 넣기
+  7. 마무리 문단 (소제목 없이 작성하며, 아래 3가지 핵심 내용을 반드시 자연스럽게 포함하여 구매를 유도할 것:
+     ① 벨루나몰에는 1만여 종류의 다양한 제품이 준비되어 있다는 점
+     ② 철저한 이중 비밀포장으로 외부에서 내용물을 절대 알 수 없어 안심하고 주문해도 된다는 점
+     ③ 빠르고 안전한 배송 서비스를 제공해 드린다는 점
+     ※ 단, <a> 태그 링크는 넣지 말고 텍스트로 https://velunamall.com 주소만 자연스럽게 언급할 것)
+
 출력 형식은 JSON이 아니라 아래 구분자 형식으로만 출력할 것:
 
 [TITLE]
@@ -344,17 +347,70 @@ def build_purchase_card_html(product_name: str, price: int, card_image_url: str,
 </a>
 """.strip()
 
+# ---------- 💡 새롭게 추가된 기능: 하단 안심 배송 & 스토어 안내 박스 ----------
+def build_trust_banner_html() -> str:
+    """본문 하단에 고정 삽입되는 벨루나몰 3대 핵심 강점(1만여 상품, 비밀포장, 안전배송) 안내 박스"""
+    return f"""
+<div style="max-width:540px; margin:36px auto 24px auto; border:2px solid #f2b8cc; border-radius:16px; background:#fff9fb; padding:26px 22px; box-shadow:0 6px 20px rgba(231,84,128,0.10); font-family:'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; box-sizing:border-box;">
+  <div style="text-align:center; margin-bottom:20px; padding-bottom:14px; border-bottom:1px dashed #f0c8d6;">
+    <span style="display:inline-block; background:{ACCENT_COLOR}; color:#ffffff; font-size:12px; font-weight:700; padding:4px 12px; border-radius:20px; letter-spacing:0.5px; margin-bottom:8px;">VELUNA PROMISE</span>
+    <p style="margin:0; font-size:19px; font-weight:800; color:#222222; line-height:1.4;">벨루나몰만의 3가지 안심 약속</p>
+  </div>
+
+  <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:14px; background:#ffffff; padding:14px 16px; border-radius:12px; border:1px solid #f8dce6;">
+    <div style="font-size:24px; line-height:1; flex-shrink:0; margin-top:2px;">🛍️</div>
+    <div style="text-align:left;">
+      <p style="margin:0 0 4px 0; font-size:16px; font-weight:700; color:#d63865;">1만여 종류의 압도적인 상품 라인업</p>
+      <p style="margin:0; font-size:14px; color:#555555; line-height:1.5;">입문자용 데일리 아이템부터 프리미엄 하이엔드 제품까지, 취향에 맞는 모든 상품을 한곳에서 만나보세요.</p>
+    </div>
+  </div>
+
+  <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:14px; background:#ffffff; padding:14px 16px; border-radius:12px; border:1px solid #f8dce6;">
+    <div style="font-size:24px; line-height:1; flex-shrink:0; margin-top:2px;">🔒</div>
+    <div style="text-align:left;">
+      <p style="margin:0 0 4px 0; font-size:16px; font-weight:700; color:#d63865;">100% 철저한 이중 비밀포장 안심 주문</p>
+      <p style="margin:0; font-size:14px; color:#555555; line-height:1.5;">박스와 송장 어디에도 성인용품 관련 문구나 상호명이 표기되지 않아 누구도 내용물을 알 수 없습니다.</p>
+    </div>
+  </div>
+
+  <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:20px; background:#ffffff; padding:14px 16px; border-radius:12px; border:1px solid #f8dce6;">
+    <div style="font-size:24px; line-height:1; flex-shrink:0; margin-top:2px;">🚀</div>
+    <div style="text-align:left;">
+      <p style="margin:0 0 4px 0; font-size:16px; font-weight:700; color:#d63865;">빠르고 안전한 안심 배송 서비스</p>
+      <p style="margin:0; font-size:14px; color:#555555; line-height:1.5;">주문 확인 즉시 꼼꼼한 검수를 거쳐 신속하고 안전하게 고객님의 두 손까지 보내드립니다.</p>
+    </div>
+  </div>
+
+  <div style="text-align:center; background:#fceef3; padding:12px 14px; border-radius:10px;">
+    <p style="margin:0; font-size:14px; color:#444444; font-weight:600;">
+      공식 스토어 바로가기 👉 <a href="[https://velunamall.com](https://velunamall.com)" target="_blank" rel="noopener" style="color:{ACCENT_COLOR}; text-decoration:underline; font-weight:800;">[https://velunamall.com](https://velunamall.com)</a>
+    </p>
+  </div>
+</div>
+""".strip()
+
 # ---------- 제목 정규화 ----------
-TITLE_PREFIX = "[성인용품 벨루나]"
+TITLE_PREFIX = "성인용품 전문쇼핑몰 사이트 벨루나|"
 BANNED_TITLE_PATTERNS = [r"솔직\s*후기", r"내돈\s*내산", r"리얼\s*후기", r"실사용\s*후기"]
 
-def normalize_title(title: str) -> str:
+def normalize_title(title: str, product_name: str) -> str:
     t = title.strip()
     for pattern in BANNED_TITLE_PATTERNS:
         t = re.sub(pattern, "", t)
     t = re.sub(r"^\[[^\]]*\]\s*", "", t).strip()
-    t = re.sub(r"\s{2,}", " ", t).strip(" ,.-")
-    return f"{TITLE_PREFIX} {t}"
+    
+    # Gemini가 생성한 기존 접두어 변형들을 모두 제거하여 중복 방지
+    t = re.sub(r"^성인용품[^|]*\|\s*", "", t).strip()
+    
+    # 남은 제목의 시작 부분에 이미 상품명이 있다면 중복되지 않게 제거 후 재조립
+    if t.startswith(product_name):
+        t = t[len(product_name):].strip()
+        
+    t = re.sub(r"\s{2,}", " ", t).strip(" ,.-|")
+    
+    if t:
+        return f"{TITLE_PREFIX} {product_name} {t}"
+    return f"{TITLE_PREFIX} {product_name}"
 
 # ---------- HTML 본문 후처리 (요약 박스, 목차, 중간 카드 삽입) ----------
 def style_summary_box(html_body: str) -> str:
@@ -421,14 +477,13 @@ def add_toc_links(html_body: str) -> str:
     except:
         return html_body
 
-# 💡 새롭게 추가된 기능: 본문 중간에 구매 카드 삽입
+# 💡 본문 중간에 구매 카드 삽입
 def insert_middle_purchase_card(html_body: str, card_html: str) -> str:
     """본문의 섹션(h2 태그) 개수를 파악하여 정확히 중간 위치에 구매 카드를 추가합니다."""
     try:
         soup = BeautifulSoup(html_body, "html.parser")
         h2_tags = soup.find_all("h2")
         
-        # 섹션이 2개 이상일 때만 본문 중간에 삽입
         if len(h2_tags) >= 2:
             mid_idx = len(h2_tags) // 2
             target_h2 = h2_tags[mid_idx]
@@ -488,12 +543,13 @@ def main():
     
     card_image_url = product_thumb_url or category_thumb_url
     purchase_card_html = build_purchase_card_html(product_name, price, card_image_url, detail_url)
+    trust_banner_html = build_trust_banner_html()
 
-    # 💡 HTML 후처리 단계 (순서: 요약박스 -> 목차 -> ❗중간 카드 삽입❗)
+    # 💡 HTML 후처리 단계 (순서: 요약박스 -> 목차 -> 중간 카드 삽입)
     content["html_body"] = style_summary_box(content["html_body"])
     content["html_body"] = add_toc_links(content["html_body"])
     content["html_body"] = insert_middle_purchase_card(content["html_body"], purchase_card_html)
-    content["title"] = normalize_title(content["title"])
+    content["title"] = normalize_title(content["title"], product_name)
 
     category_thumb_html = f'<p style="text-align:center;margin:0 0 24px 0;"><img src="{category_thumb_url}" alt="{category_label}용품" style="max-width:100%;"></p>'
     product_thumb_html = (
@@ -501,11 +557,12 @@ def main():
         if product_thumb_url else ""
     )
 
-    # 최종 병합: (하단에도 기존처럼 카드가 들어갑니다)
+    # 최종 병합: 본문 -> 상품 썸네일 -> 안심 배송 안내 박스 -> 하단 구매 카드
     final_html = f"""
 {category_thumb_html}
 {content['html_body']}
 {product_thumb_html}
+{trust_banner_html}
 {purchase_card_html}
 """.strip()
 
