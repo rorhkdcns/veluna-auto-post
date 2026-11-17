@@ -390,7 +390,7 @@ def build_trust_banner_html() -> str:
 """.strip()
 
 # ---------- 제목 정규화 ----------
-TITLE_PREFIX = "성인용품 전문쇼핑몰 사이트 벨루나|"
+TITLE_PREFIX = "성인용품 전문쇼핑몰 사이트 벨루나 | "
 BANNED_TITLE_PATTERNS = [r"솔직\s*후기", r"내돈\s*내산", r"리얼\s*후기", r"실사용\s*후기"]
 
 def normalize_title(title: str, product_name: str) -> str:
